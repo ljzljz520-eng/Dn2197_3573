@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "metrics": {
+    "production_loc": 2369,
+    "production_files": 36,
+    "production_packages": 8,
+    "test_files": 9,
+    "production_functions": 189,
+    "decision_points": 332
+  },
+  "persistence": {
+    "module": "go.etcd.io/bbolt",
+    "entities": [
+      "Student",
+      "CourseGrade",
+      "Gradebook",
+      "AuditEvent"
+    ],
+    "reopen_test": "TestPersistenceSurvivesReopen"
+  },
+  "workflows": [
+    {
+      "steps": [
+        "construct a complete graduate gradebook",
+        "validate and persist the gradebook",
+        "query by student ID and name",
+        "inspect the persisted creation audit event"
+      ],
+      "test": "TestWorkflowAddAndQuery"
+    },
+    {
+      "steps": [
+        "add deterministic cohort gradebooks",
+        "persist every record and creation audit",
+        "rank records and calculate statistics",
+        "build a report from stored records"
+      ],
+      "test": "TestWorkflowRankingStatisticsAndReport"
+    },
+    {
+      "steps": [
+        "persist the initial gradebook",
+        "release both operators after synchronized reads",
+        "write confirmation state and audit events",
+        "query the final count and confirming operators"
+      ],
+      "test": "TestWorkflowConcurrentConfirmationKeepsBothOperators"
+    }
+  ]
+}
