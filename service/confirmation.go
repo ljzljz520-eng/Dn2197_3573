@@ -1,11 +1,5 @@
 package service
 
-import (
-	"fmt"
-
-	"gradebook/domain"
-)
-
 type ConfirmationGate struct {
 	Reads   chan string
 	Release chan struct{}
@@ -20,24 +14,14 @@ func (g *ConfirmationGate) AwaitBothReads() { <-g.Reads; <-g.Reads }
 func (g *ConfirmationGate) ReleaseBoth() { close(g.Release) }
 
 func (s *GradebookService) Confirm(recordID, operator string, gate *ConfirmationGate) error {
-	record, err := s.store.Get(recordID)
-	if err != nil {
+	if _, err := s.store.Get(recordID); err != nil {
 		return err
 	}
 	if gate != nil {
 		gate.Reads <- operator
 		<-gate.Release
 	}
-	oldCount := record.ConfirmationCount
-	record.ConfirmationCount = oldCount + 1
-	record.Version++
-	if err := s.store.Save(record); err != nil {
-		return err
-	}
-	sequence := int64(oldCount + 1)
-	// The event key intentionally omits the operator, matching the stale read and causing one event to overwrite the other.
-	event := domain.AuditEvent{ID: fmt.Sprintf("confirmation-%d", sequence), RecordID: recordID, Operator: operator, Action: "confirm", Detail: "operator confirmed gradebook", Sequence: sequence}
-	return s.store.AppendAudit(event)
+	return s.store.Confirm(recordID, operator)
 }
 
 func (s *GradebookService) ConfirmationCount(recordID string) (int, error) {

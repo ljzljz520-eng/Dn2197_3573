@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"go.etcd.io/bbolt"
+	"gradebook/audit"
 	"gradebook/domain"
 )
 
@@ -86,6 +87,45 @@ func (s *Store) Get(recordID string) (domain.Gradebook, error) {
 		return json.Unmarshal(append([]byte(nil), value...), &record)
 	})
 	return record, err
+}
+
+func (s *Store) Confirm(recordID, operator string) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.db == nil {
+		return errors.New("store closed")
+	}
+	return s.db.Update(func(tx *bbolt.Tx) error {
+		gradebooks := tx.Bucket(gradesBucket)
+		value := gradebooks.Get([]byte(recordID))
+		if value == nil {
+			return ErrNotFound
+		}
+
+		var record domain.Gradebook
+		if err := json.Unmarshal(value, &record); err != nil {
+			return err
+		}
+		record.ConfirmationCount++
+		record.Version++
+		recordData, err := json.Marshal(record)
+		if err != nil {
+			return err
+		}
+
+		sequence := int64(record.ConfirmationCount)
+		event := audit.NewConfirmationEvent(sequence, recordID, operator)
+		eventData, err := json.Marshal(event)
+		if err != nil {
+			return err
+		}
+		eventKey := fmt.Sprintf("%s:%020d:%s", event.RecordID, event.Sequence, event.ID)
+
+		if err := gradebooks.Put([]byte(recordID), recordData); err != nil {
+			return err
+		}
+		return tx.Bucket(auditBucket).Put([]byte(eventKey), eventData)
+	})
 }
 
 func (s *Store) List() ([]domain.Gradebook, error) {
