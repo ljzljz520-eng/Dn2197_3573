@@ -123,6 +123,57 @@ func (s *Store) AppendAudit(event domain.AuditEvent) error {
 	return s.db.Update(func(tx *bbolt.Tx) error { return tx.Bucket(auditBucket).Put([]byte(key), data) })
 }
 
+// ConfirmRecord atomically confirms a gradebook for an operator within a single
+// transaction. Reading the current count inside the write transaction means a
+// concurrent confirmation that staged a stale read before the writers were
+// released still observes the count committed by the other writer, so the two
+// increments compose into a final count of two rather than overwriting each
+// other. The audit event key embeds both the authoritative per-record sequence
+// and the operator, so the two events land under distinct keys and both survive.
+func (s *Store) ConfirmRecord(recordID, operator string) (domain.Gradebook, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var record domain.Gradebook
+	if s.db == nil {
+		return record, errors.New("store closed")
+	}
+	err := s.db.Update(func(tx *bbolt.Tx) error {
+		grades := tx.Bucket(gradesBucket)
+		value := grades.Get([]byte(recordID))
+		if value == nil {
+			return ErrNotFound
+		}
+		if err := json.Unmarshal(append([]byte(nil), value...), &record); err != nil {
+			return err
+		}
+		record.ConfirmationCount++
+		record.Version++
+		data, err := json.Marshal(record)
+		if err != nil {
+			return err
+		}
+		if err := grades.Put([]byte(recordID), data); err != nil {
+			return err
+		}
+		sequence := int64(record.ConfirmationCount)
+		event := domain.AuditEvent{
+			ID:       fmt.Sprintf("confirmation-%s-%d", operator, sequence),
+			RecordID: recordID,
+			Operator: operator,
+			Action:   "confirm",
+			Detail:   "operator confirmed gradebook",
+			Sequence: sequence,
+		}
+		auditData, err := json.Marshal(event)
+		if err != nil {
+			return err
+		}
+		key := fmt.Sprintf("%s:%020d:%s", event.RecordID, event.Sequence, event.ID)
+		return tx.Bucket(auditBucket).Put([]byte(key), auditData)
+	})
+	return record, err
+}
+
 func (s *Store) Audits(recordID string) ([]domain.AuditEvent, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
